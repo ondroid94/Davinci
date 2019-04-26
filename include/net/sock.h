@@ -231,6 +231,29 @@ struct sock_common {
 	/* public: */
 };
 
+struct bpf_local_storage;
+struct bpf_sk_storage;
+
+struct sk_security_struct {
+#ifdef CONFIG_NETLABEL
+	enum {				/* NetLabel state */
+		NLBL_UNSET = 0,
+		NLBL_REQUIRE,
+		NLBL_LABELED,
+		NLBL_REQSKB,
+		NLBL_CONNLABELED,
+	} nlbl_state;
+	struct netlbl_lsm_secattr *nlbl_secattr; /* NetLabel sec attributes */
+#endif
+	u32 sid;			/* SID of this object */
+	u32 peer_sid;			/* SID of peer */
+	u16 sclass;			/* sock security class */
+	enum {				/* SCTP association state */
+		SCTP_ASSOC_UNSET = 0,
+		SCTP_ASSOC_SET,
+	} sctp_assoc_state;
+};
+
 /**
   *	struct sock - network layer representation of sockets
   *	@__sk_common: shared layout with inet_timewait_sock
@@ -266,7 +289,7 @@ struct sock_common {
   *	@sk_route_nocaps: forbidden route capabilities (e.g NETIF_F_GSO_MASK)
   *	@sk_gso_type: GSO type (e.g. %SKB_GSO_TCPV4)
   *	@sk_gso_max_size: Maximum GSO segment size to build
-  *	@sk_pacing_shift: scaling factor for TCP Small Queues
+  *	@sk_gso_max_segs: Maximum number of GSO segments
   *	@sk_lingertime: %SO_LINGER l_linger setting
   *	@sk_backlog: always used with the per-socket spinlock held
   *	@sk_callback_lock: used with the callbacks in the end of this struct
@@ -446,7 +469,6 @@ struct sock {
 				sk_type      : 16;
 #define SK_PROTOCOL_MAX U8_MAX
 	u16			sk_gso_max_segs;
-	u8			sk_pacing_shift;
 	unsigned long	        sk_lingertime;
 	struct proto		*sk_prot_creator;
 	rwlock_t		sk_callback_lock;
@@ -471,7 +493,7 @@ struct sock {
 	struct socket		*sk_socket;
 	void			*sk_user_data;
 #ifdef CONFIG_SECURITY
-	void			*sk_security;
+	struct sk_security_struct	sk_security[1];
 #endif
 	struct sock_cgroup_data	sk_cgrp_data;
 	struct mem_cgroup	*sk_memcg;
@@ -483,6 +505,9 @@ struct sock {
 						  struct sk_buff *skb);
 	void                    (*sk_destruct)(struct sock *sk);
 	struct sock_reuseport __rcu	*sk_reuseport_cb;
+#ifdef CONFIG_BPF_SYSCALL
+	struct bpf_sk_storage __rcu	*sk_bpf_storage;
+#endif
 	struct rcu_head		sk_rcu;
 };
 
@@ -1715,7 +1740,8 @@ static inline void sk_set_socket(struct sock *sk, struct socket *sock)
 	sk->sk_socket = sock;
 }
 
-static inline wait_queue_head_t *sk_sleep(struct sock *sk)
+static inline wait_queue_head_t __attribute__((no_sanitize("null")))
+	*sk_sleep(struct sock *sk)
 {
 	BUILD_BUG_ON(offsetof(struct socket_wq, wait) != 0);
 	return &rcu_dereference_raw(sk->sk_wq)->wait;
@@ -1808,7 +1834,7 @@ static inline void dst_negative_advice(struct sock *sk)
 		if (ndst != dst) {
 			rcu_assign_pointer(sk->sk_dst_cache, ndst);
 			sk_tx_queue_clear(sk);
-			WRITE_ONCE(sk->sk_dst_pending_confirm, 0);
+			sk->sk_dst_pending_confirm = 0;
 		}
 	}
 }
@@ -1819,7 +1845,7 @@ __sk_dst_set(struct sock *sk, struct dst_entry *dst)
 	struct dst_entry *old_dst;
 
 	sk_tx_queue_clear(sk);
-	WRITE_ONCE(sk->sk_dst_pending_confirm, 0);
+	sk->sk_dst_pending_confirm = 0;
 	old_dst = rcu_dereference_protected(sk->sk_dst_cache,
 					    lockdep_sock_is_held(sk));
 	rcu_assign_pointer(sk->sk_dst_cache, dst);
@@ -1832,7 +1858,7 @@ sk_dst_set(struct sock *sk, struct dst_entry *dst)
 	struct dst_entry *old_dst;
 
 	sk_tx_queue_clear(sk);
-	WRITE_ONCE(sk->sk_dst_pending_confirm, 0);
+	sk->sk_dst_pending_confirm = 0;
 	old_dst = xchg((__force struct dst_entry **)&sk->sk_dst_cache, dst);
 	dst_release(old_dst);
 }
@@ -2490,26 +2516,5 @@ extern __u32 sysctl_rmem_default;
 
 /* On 32bit arches, an skb frag is limited to 2^15 */
 #define SKB_FRAG_PAGE_ORDER	get_order(32768)
-
-/* Default TCP Small queue budget is ~1 ms of data (1sec >> 10)
- * Some wifi drivers need to tweak it to get more chunks.
- * They can use this helper from their ndo_start_xmit()
- */
-static inline void sk_pacing_shift_update(struct sock *sk, int val)
-{
-	if (!sk || !sk_fullsock(sk) || sk->sk_pacing_shift == val)
-		return;
-	sk->sk_pacing_shift = val;
-}
-/* SOCKEV Notifier Events */
-#define SOCKEV_SOCKET   0x00
-#define SOCKEV_BIND     0x01
-#define SOCKEV_LISTEN   0x02
-#define SOCKEV_ACCEPT   0x03
-#define SOCKEV_CONNECT  0x04
-#define SOCKEV_SHUTDOWN 0x05
-
-int sockev_register_notify(struct notifier_block *nb);
-int sockev_unregister_notify(struct notifier_block *nb);
 
 #endif	/* _SOCK_H */
