@@ -234,25 +234,6 @@ struct sock_common {
 struct bpf_local_storage;
 struct bpf_sk_storage;
 
-struct sk_security_struct {
-#ifdef CONFIG_NETLABEL
-	enum {				/* NetLabel state */
-		NLBL_UNSET = 0,
-		NLBL_REQUIRE,
-		NLBL_LABELED,
-		NLBL_REQSKB,
-		NLBL_CONNLABELED,
-	} nlbl_state;
-	struct netlbl_lsm_secattr *nlbl_secattr; /* NetLabel sec attributes */
-#endif
-	u32 sid;			/* SID of this object */
-	u32 peer_sid;			/* SID of peer */
-	u16 sclass;			/* sock security class */
-	enum {				/* SCTP association state */
-		SCTP_ASSOC_UNSET = 0,
-		SCTP_ASSOC_SET,
-	} sctp_assoc_state;
-};
 
 /**
   *	struct sock - network layer representation of sockets
@@ -427,6 +408,7 @@ struct sock {
 	int			sk_write_pending;
 	__u32			sk_dst_pending_confirm;
 	u32			sk_pacing_status; /* see enum sk_pacing */
+	u8			sk_pacing_shift;	/* davinci: TCP Small Queues scaling */
 	long			sk_sndtimeo;
 	struct timer_list	sk_timer;
 	__u32			sk_priority;
@@ -493,7 +475,7 @@ struct sock {
 	struct socket		*sk_socket;
 	void			*sk_user_data;
 #ifdef CONFIG_SECURITY
-	struct sk_security_struct	sk_security[1];
+	void			*sk_security;
 #endif
 	struct sock_cgroup_data	sk_cgrp_data;
 	struct mem_cgroup	*sk_memcg;
@@ -2522,4 +2504,24 @@ extern __u32 sysctl_rmem_default;
 /* On 32bit arches, an skb frag is limited to 2^15 */
 #define SKB_FRAG_PAGE_ORDER	get_order(32768)
 
+
+/* SOCKEV Notifier Events (davinci/qcom) */
+#define SOCKEV_SOCKET   0x00
+#define SOCKEV_BIND     0x01
+#define SOCKEV_LISTEN   0x02
+#define SOCKEV_ACCEPT   0x03
+#define SOCKEV_CONNECT  0x04
+#define SOCKEV_SHUTDOWN 0x05
+
+int sockev_register_notify(struct notifier_block *nb);
+int sockev_unregister_notify(struct notifier_block *nb);
+
+
+/* davinci/qcom: rmnet tunes TCP Small Queues pacing */
+static inline void sk_pacing_shift_update(struct sock *sk, int val)
+{
+	if (!sk || !sk_fullsock(sk) || sk->sk_pacing_shift == val)
+		return;
+	sk->sk_pacing_shift = val;
+}
 #endif	/* _SOCK_H */
