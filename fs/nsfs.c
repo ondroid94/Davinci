@@ -126,14 +126,22 @@ static struct ns_common *ns_get_path_task(void *private_data)
 	struct ns_get_path_task_args *args = private_data;
 	return args->ns_ops->get(args->task);
 }
-void *ns_get_path(struct path *path, struct task_struct *task,
+/*
+ * upstream cleanup: ns_get_path() returns int (0 on success, -errno on
+ * failure) and fills *path, instead of returning path-or-ERR_PTR via
+ * void *. This matches how kernel/events/core.c and fs/proc/namespaces.c
+ * (post-A16 backport) call it.
+ */
+int ns_get_path(struct path *path, struct task_struct *task,
 		  const struct proc_ns_operations *ns_ops)
 {
 	struct ns_get_path_task_args args = {
 		.ns_ops	= ns_ops,
 		.task	= task,
 	};
-	return ns_get_path_cb(path, ns_get_path_task, &args);
+	void *err = ns_get_path_cb(path, ns_get_path_task, &args);
+
+	return PTR_ERR_OR_ZERO(err);
 }
 
 int open_related_ns(struct ns_common *ns,
