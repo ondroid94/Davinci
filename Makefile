@@ -1376,6 +1376,12 @@ ifneq (,$(BUILD_NUMBER))
 else
 	UTS_RELEASE=$(KERNELRELEASE)
 endif
+# Display-only kernel release override: userspace (uname -r, /proc/version,
+# dmesg banner) reports "4.19.325-ondroid94" while VERSION/PATCHLEVEL/SUBLEVEL
+# above stay at the tree's real 4.14.331 so LINUX_VERSION_CODE (used
+# throughout drivers for compile-time compatibility checks, e.g. the
+# qca-wifi-host-cmn timer API shims) remains accurate for this source tree.
+UTS_RELEASE=4.19.325-ondroid94
 define filechk_utsrelease.h
 	if [ `echo -n "$(UTS_RELEASE)" | wc -c ` -gt $(uts_len) ]; then \
 		echo '"$(UTS_RELEASE)" exceeds $(uts_len) characters' >&2;    \
